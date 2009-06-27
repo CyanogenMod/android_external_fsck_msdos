@@ -161,12 +161,34 @@ readboot(dosfs, boot)
 		}
 		backup[65] = block[65];				/* XXX */
 		if (memcmp(block + 11, backup + 11, 79)) {
-			/* Correct?					XXX */
-			pfatal("backup doesn't compare to primary bootblock");
-			if (alwaysno)
-				pfatal("\n");
-			else
-				return FSFATAL;
+                        char tmp[255];
+                        int i;
+
+			/*
+			 * For now, lets not bail out if they don't match
+			 * It seems a lot of sdcards are formatted with
+			 * the backup either empty or containing garbage.
+			 */
+
+			pwarn("Primary/Backup bootblock miscompare\n");
+
+                        strcpy(tmp, "");
+                        pwarn("Primary:\n");
+			for (i = 0; i < 79; i++) {
+				char tmp2[16];
+                                snprintf(tmp2, sizeof(tmp2), "%.2x ", block[11 + i]);
+				strcat(tmp, tmp2);
+                        }
+                        pwarn("%s\n", tmp);
+
+			strcpy(tmp, "");
+                        pwarn("Backup:\n");
+			for (i = 0; i < 79; i++) {
+				char tmp2[16];
+                                snprintf(tmp2, sizeof(tmp2), "%.2x ", backup[11 + i]);
+				strcat(tmp, tmp2);
+                        }
+                        pwarn("%s\n", tmp);
 		}
 		/* Check backup FSInfo?					XXX */
 	}
