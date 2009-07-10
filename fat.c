@@ -351,11 +351,11 @@ clustdiffer(cl_t cl, cl_t *cp1, cl_t *cp2, int fatnum)
 			}
 			pwarn("Cluster %u is marked %s in FAT 0, %s in FAT %d\n",
 			      cl, rsrvdcltype(*cp1), rsrvdcltype(*cp2), fatnum);
-			if (ask(0, "Use FAT 0's entry")) {
+			if (ask(1, "Use FAT 0's entry")) {
 				*cp2 = *cp1;
 				return FSFATMOD;
 			}
-			if (ask(0, "Use FAT %d's entry", fatnum)) {
+			if (ask(1, "Use FAT %d's entry", fatnum)) {
 				*cp1 = *cp2;
 				return FSFATMOD;
 			}
@@ -363,11 +363,11 @@ clustdiffer(cl_t cl, cl_t *cp1, cl_t *cp2, int fatnum)
 		}
 		pwarn("Cluster %u is marked %s in FAT 0, but continues with cluster %u in FAT %d\n",
 		      cl, rsrvdcltype(*cp1), *cp2, fatnum);
-		if (ask(0, "Use continuation from FAT %d", fatnum)) {
+		if (ask(1, "Use continuation from FAT %d", fatnum)) {
 			*cp1 = *cp2;
 			return FSFATMOD;
 		}
-		if (ask(0, "Use mark from FAT 0")) {
+		if (ask(1, "Use mark from FAT 0")) {
 			*cp2 = *cp1;
 			return FSFATMOD;
 		}
@@ -376,11 +376,11 @@ clustdiffer(cl_t cl, cl_t *cp1, cl_t *cp2, int fatnum)
 	if (*cp2 == CLUST_FREE || *cp2 >= CLUST_RSRVD) {
 		pwarn("Cluster %u continues with cluster %u in FAT 0, but is marked %s in FAT %d\n",
 		      cl, *cp1, rsrvdcltype(*cp2), fatnum);
-		if (ask(0, "Use continuation from FAT 0")) {
+		if (ask(1, "Use continuation from FAT 0")) {
 			*cp2 = *cp1;
 			return FSFATMOD;
 		}
-		if (ask(0, "Use mark from FAT %d", fatnum)) {
+		if (ask(1, "Use mark from FAT %d", fatnum)) {
 			*cp1 = *cp2;
 			return FSFATMOD;
 		}
@@ -388,11 +388,11 @@ clustdiffer(cl_t cl, cl_t *cp1, cl_t *cp2, int fatnum)
 	}
 	pwarn("Cluster %u continues with cluster %u in FAT 0, but with cluster %u in FAT %d\n",
 	      cl, *cp1, *cp2, fatnum);
-	if (ask(0, "Use continuation from FAT 0")) {
+	if (ask(1, "Use continuation from FAT 0")) {
 		*cp2 = *cp1;
 		return FSFATMOD;
 	}
-	if (ask(0, "Use continuation from FAT %d", fatnum)) {
+	if (ask(1, "Use continuation from FAT %d", fatnum)) {
 		*cp1 = *cp2;
 		return FSFATMOD;
 	}

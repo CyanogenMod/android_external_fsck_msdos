@@ -719,7 +719,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 					pwarn("%s doesn't start a cluster chain\n",
 					      fullpath(&dirent));
 				if (dirent.flags & ATTR_DIRECTORY) {
-					if (ask(0, "Remove")) {
+					if (ask(1, "Remove")) {
 						*p = SLOT_DELETED;
 						mod |= THISMOD|FSDIRMOD;
 					} else
