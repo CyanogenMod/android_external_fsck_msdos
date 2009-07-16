@@ -49,9 +49,11 @@ static const char rcsid[] =
 #include "fsutil.h"
 
 /*
- * If the FAT > this size then skip comparing
+ * If the FAT > this size then skip comparing, lest we risk
+ * OOMing the framework. in the future we need to just re-write
+ * this whole thing and optimize for less memory
  */
-#define FAT_COMPARE_MAX_KB 8192 
+#define FAT_COMPARE_MAX_KB 4096
 
 int
 checkfilesys(const char *fname)
