@@ -667,8 +667,14 @@ checklost(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 		pwarn("Lost cluster chain at cluster %u\n%d Cluster(s) lost\n",
 		      head, fat[head].length);
 		mod |= ret = reconnect(dosfs, boot, fat, head);
-		if (mod & FSFATAL)
-			break;
+		if (mod & FSFATAL) {
+			/* If the reconnect failed, then just clear the chain */
+			pwarn("Error reconnecting chain - clearing\n");
+			mod &= ~FSFATAL;
+			clearchain(boot, fat, head);
+			mod |= FSFATMOD;
+			continue;
+		}
 		if (ret == FSERROR && ask(1, "Clear")) {
 			clearchain(boot, fat, head);
 			mod |= FSFATMOD;
