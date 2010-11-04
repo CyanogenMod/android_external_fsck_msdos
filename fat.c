@@ -449,7 +449,7 @@ tryclear(struct bootblock *boot, struct fatEntry *fat, cl_t head, cl_t *trunc)
 int
 checkfat(struct bootblock *boot, struct fatEntry *fat)
 {
-	cl_t head, p, h, n;
+	cl_t head, p, h, n, wdk;
 	u_int len;
 	int ret = 0;
 	int conf;
@@ -466,8 +466,14 @@ checkfat(struct bootblock *boot, struct fatEntry *fat)
 
 		/* follow the chain and mark all clusters on the way */
 		for (len = 0, p = head;
-		     p >= CLUST_FIRST && p < boot->NumClusters;
-		     p = fat[p].next) {
+			 p >= CLUST_FIRST && p < boot->NumClusters;
+			 p = fat[p].next) {
+				/* we have to check the len, to avoid infinite loop */
+				if (len > boot->NumClusters) {
+					printf("detect cluster chain loop: head %u for p %u\n", head, p);
+					break;
+			}
+
 			fat[p].head = head;
 			len++;
 		}
@@ -487,11 +493,14 @@ checkfat(struct bootblock *boot, struct fatEntry *fat)
 			continue;
 
 		/* follow the chain to its end (hopefully) */
-		for (p = head;
-		     (n = fat[p].next) >= CLUST_FIRST && n < boot->NumClusters;
-		     p = n)
+		/* also possible infinite loop, that's why I insert wdk counter */
+		for (p = head,wdk=boot->NumClusters;
+		     (n = fat[p].next) >= CLUST_FIRST && n < boot->NumClusters && wdk;
+				 p = n,wdk--) {
 			if (fat[n].head != head)
 				break;
+		}
+
 		if (n >= CLUST_EOFS)
 			continue;
 
@@ -692,9 +701,16 @@ checklost(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 				ret = 1;
 			}
 		}
+
+		if (boot->FSNext > boot->NumClusters  ) {
+			pwarn("FSNext block (%d) not correct NumClusters (%d)\n",
+					boot->FSNext, boot->NumClusters);
+			boot->FSNext=CLUST_FIRST; // boot->FSNext can have -1 value.
+		}
+
 		if (boot->NumFree && fat[boot->FSNext].next != CLUST_FREE) {
 			pwarn("Next free cluster in FSInfo block (%u) not free\n",
-			      boot->FSNext);
+					boot->FSNext);
 			if (ask(1, "Fix"))
 				for (head = CLUST_FIRST; head < boot->NumClusters; head++)
 					if (fat[head].next == CLUST_FREE) {
