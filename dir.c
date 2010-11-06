@@ -321,8 +321,12 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 		}
 		off = startcl * boot->SecPerClust + boot->ClusterOffset;
 		off *= boot->BytesPerSec;
-		if (lseek(f, off, SEEK_SET) != off
-		    || read(f, delbuf, clsz) != clsz) {
+		if (lseek64(f, off, SEEK_SET) != off) {
+			printf("off = %llu\n", off);
+			perror("Unable to lseek64");
+			return FSFATAL;
+		}
+		if (read(f, delbuf, clsz) != clsz) {
 			perror("Unable to read directory");
 			return FSFATAL;
 		}
@@ -330,8 +334,12 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 			*s = SLOT_DELETED;
 			s += 32;
 		}
-		if (lseek(f, off, SEEK_SET) != off
-		    || write(f, delbuf, clsz) != clsz) {
+		if (lseek64(f, off, SEEK_SET) != off) {
+			printf("off = %llu\n", off);
+			perror("Unable to lseek64");
+			return FSFATAL;
+		}
+		if (write(f, delbuf, clsz) != clsz) {
 			perror("Unable to write directory");
 			return FSFATAL;
 		}
@@ -424,6 +432,87 @@ checksize(struct bootblock *boot, struct fatEntry *fat, u_char *p,
 	return FSOK;
 }
 
+
+static u_char  dot_header[16]={0x2E, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00};
+static u_char  dot_dot_header[16]={0x2E, 0x2E, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00};
+
+/*
+ * Check for missing or broken '.' and '..' entries.
+ */
+static int
+check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirEntry *dir)
+{
+	u_char *p, *buf;
+	loff_t off;
+	int last;
+	cl_t cl;
+	int rc=0, n_count;
+
+	int dot, dotdot;
+	dot = dotdot = 0;
+	cl = dir->head;
+
+	if (dir->parent && (cl < CLUST_FIRST || cl >= boot->NumClusters)) {
+		return rc;
+	}
+
+	do {
+		if (!(boot->flags & FAT32) && !dir->parent) {
+			last = boot->RootDirEnts * 32;
+			off = boot->ResSectors + boot->FATs * boot->FATsecs;
+		} else {
+			last = boot->SecPerClust * boot->BytesPerSec;
+			off = cl * boot->SecPerClust + boot->ClusterOffset;
+		}
+
+		off *= boot->BytesPerSec;
+		buf = malloc(last);
+		if (!buf) {
+			perror("Unable to malloc");
+			return FSFATAL;
+		}
+		if (lseek64(f, off, SEEK_SET) != off) {
+			printf("off = %llu\n", off);
+			perror("Unable to lseek64");
+			return FSFATAL;
+		}
+		if (read(f, buf, last) != last) {
+			perror("Unable to read");
+			return FSFATAL;
+		}
+		last /= 32;
+		p = buf;
+		for (n_count=0, rc=0; n_count < 11; n_count++) {
+			if (dot_header[n_count] != p[n_count]) {
+				rc=-1;
+				break;
+			}
+		}
+		 if(!rc)
+			dot=1;
+
+		for (n_count = 0, rc = 0; n_count < 11; n_count++) {
+			if (dot_dot_header[n_count] != p[n_count+32]) {
+				rc=-1;
+				break;
+			}
+		}
+		if(!rc)
+			dotdot=1;
+		free(buf);
+	} while ((cl = fat[cl].next) >= CLUST_FIRST && cl < boot->NumClusters);
+
+	if (!dot || !dotdot) {
+		if (!dot)
+			pwarn("%s: '.' absent for %s.\n",__func__,dir->name);
+
+		if (!dotdot)
+			pwarn("%s: '..' absent for %s. \n",__func__,dir->name);
+		return -1;
+	}
+	return 0;
+}
+
 /*
  * Read a directory and
  *   - resolve long name records
@@ -443,6 +532,8 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 	u_int lidx = 0;
 	int shortSum;
 	int mod = FSOK;
+	int n_count=0;
+	int rc=0;
 #define	THISMOD	0x8000			/* Only used within this routine */
 
 	cl = dir->head;
@@ -454,6 +545,9 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 	}
 	shortSum = -1;
 	vallfn = invlfn = empty = NULL;
+	int dot,dotdot;
+	dot = dotdot = 0;
+
 	do {
 		if (!(boot->flags & FAT32) && !dir->parent) {
 			last = boot->RootDirEnts * 32;
@@ -464,7 +558,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 		}
 
 		off *= boot->BytesPerSec;
-                if (lseek64(f, off, SEEK_SET) != off) {
+		if (lseek64(f, off, SEEK_SET) != off) {
                         printf("off = %llu\n", off);
 			perror("Unable to lseek64");
 			return FSFATAL;
@@ -474,9 +568,6 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 			return FSFATAL;
                 }
 		last /= 32;
-		/*
-		 * Check `.' and `..' entries here?			XXX
-		 */
 		for (p = buffer, i = 0; i < last; i++, p += 32) {
 			if (dir->fsckflags & DIREMPWARN) {
 				*p = SLOT_EMPTY;
@@ -758,11 +849,11 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 						mod |= FSERROR;
 				}
 				/*
-				 * handle `.' and `..' specially
+				 * handle '.' and '..' specially
 				 */
 				if (strcmp(dirent.name, ".") == 0) {
 					if (dirent.head != dir->head) {
-						pwarn("`.' entry in %s has incorrect start cluster\n",
+						pwarn("'.' entry in %s has incorrect start cluster\n",
 						      fullpath(dir));
 						if (ask(1, "Correct")) {
 							dirent.head = dir->head;
@@ -777,12 +868,11 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 							mod |= FSERROR;
 					}
 					continue;
-				}
-				if (strcmp(dirent.name, "..") == 0) {
+                } else if (strcmp(dirent.name, "..") == 0) {
 					if (dir->parent) {		/* XXX */
 						if (!dir->parent->parent) {
 							if (dirent.head) {
-								pwarn("`..' entry in %s has non-zero start cluster\n",
+								pwarn("'..' entry in %s has non-zero start cluster\n",
 								      fullpath(dir));
 								if (ask(1, "Correct")) {
 									dirent.head = 0;
@@ -794,7 +884,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 									mod |= FSERROR;
 							}
 						} else if (dirent.head != dir->parent->head) {
-							pwarn("`..' entry in %s has incorrect start cluster\n",
+							pwarn("'..' entry in %s has incorrect start cluster\n",
 							      fullpath(dir));
 							if (ask(1, "Correct")) {
 								dirent.head = dir->parent->head;
@@ -810,6 +900,31 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 						}
 					}
 					continue;
+				} else { //only one directory entry can point to dir->head, it's  '.'
+					if (dirent.head == dir->head) {
+						pwarn("%s entry in %s has incorrect start cluster.remove\n",
+								dirent.name, fullpath(dir));
+						//we have to remove this directory entry rigth now rigth here
+						if (ask(1, "Remove")) {
+							*p = SLOT_DELETED;
+							mod |= THISMOD|FSDIRMOD;
+						} else
+							mod |= FSERROR;
+						continue;
+					}
+					/* Consistency checking. a directory must have at least two entries:
+					   a dot (.) entry that points to itself, and a dot-dot (..)
+					   entry that points to its parent.
+					 */
+					if (check_dot_dot(f,boot,fat,&dirent)) {
+						//mark directory entry as deleted.
+						if (ask(1, "Remove")) {
+							*p = SLOT_DELETED;
+							mod |= THISMOD|FSDIRMOD;
+						} else
+							mod |= FSERROR;
+						continue;
+                    }
 				}
 
 				/* create directory tree node */
@@ -820,7 +935,10 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 				memcpy(d, &dirent, sizeof(struct dosDirEntry));
 				/* link it into the tree */
 				dir->child = d;
-
+#if 0
+				printf("%s: %s : 0x%02x:head %d, next 0x%0x parent 0x%0x child 0x%0x\n",
+						__func__,d->name,d->flags,d->head,d->next,d->parent,d->child);
+#endif
 				/* Enter this directory into the todo list */
 				if (!(n = newDirTodo())) {
 					perror("No space for todo list");
