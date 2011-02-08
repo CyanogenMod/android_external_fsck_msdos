@@ -205,6 +205,10 @@ readboot(dosfs, boot)
 		pfatal("Invalid sector size: %u", boot->BytesPerSec);
 		return FSFATAL;
 	}
+	if (boot->FATs == 0) {
+		pfatal("Invalid number of FATs: %u", boot->FATs);
+		return FSFATAL;
+	}
 	if (boot->Sectors) {
 		boot->HugeSectors = 0;
 		boot->NumSectors = boot->Sectors;
