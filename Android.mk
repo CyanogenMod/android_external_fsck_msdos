@@ -1,3 +1,5 @@
+ifneq ($(BOARD_USES_CUSTOM_FSCK_MSDOS),true)
+
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
@@ -13,3 +15,5 @@ LOCAL_MODULE_TAGS :=
 LOCAL_SYSTEM_SHARED_LIBRARIES := libc
 
 include $(BUILD_EXECUTABLE)
+
+endif
