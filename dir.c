@@ -474,10 +474,12 @@ check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirE
 		if (lseek64(f, off, SEEK_SET) != off) {
 			printf("off = %llu\n", off);
 			perror("Unable to lseek64");
+			free(buf);
 			return FSFATAL;
 		}
 		if (read(f, buf, last) != last) {
 			perror("Unable to read");
+			free(buf);
 			return FSFATAL;
 		}
 		last /= 32;
