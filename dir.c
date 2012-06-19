@@ -34,6 +34,8 @@
 
 
 #include <sys/cdefs.h>
+#include "fatcache.h"
+#include "fragment.h"
 #ifndef lint
 __RCSID("$NetBSD: dir.c,v 1.14 1998/08/25 19:18:15 ross Exp $");
 static const char rcsid[] =
@@ -52,7 +54,7 @@ static const char rcsid[] =
 
 #include "ext.h"
 #include "fsutil.h"
-
+#include "dosfs.h"
 #define	SLOT_EMPTY	0x00		/* slot has never been used */
 #define	SLOT_E5		0x05		/* the real value is 0xe5 */
 #define	SLOT_DELETED	0xe5		/* file in this slot deleted */
@@ -99,13 +101,13 @@ static struct dirTodoNode *newDirTodo(void);
 static void freeDirTodo(struct dirTodoNode *);
 static char *fullpath(struct dosDirEntry *);
 static u_char calcShortSum(u_char *);
-static int delete(int, struct bootblock *, struct fatEntry *, cl_t, int,
+static int delete(int, struct bootblock *,struct cluster_chain_descriptor* ,cl_t, int,
     cl_t, int, int);
-static int removede(int, struct bootblock *, struct fatEntry *, u_char *,
+static int removede(int, struct bootblock *, struct cluster_chain_descriptor*,u_char *,
     u_char *, cl_t, cl_t, cl_t, char *, int);
-static int checksize(struct bootblock *, struct fatEntry *, u_char *,
+static int checksize(struct bootblock *, u_char *,
     struct dosDirEntry *);
-static int readDosDirSection(int, struct bootblock *, struct fatEntry *,
+static int readDosDirSection(int, struct bootblock *,
     struct dosDirEntry *);
 
 /*
@@ -221,12 +223,13 @@ static struct dosDirEntry *lostDir;
  * Init internal state for a new directory scan.
  */
 int
-resetDosDirSection(struct bootblock *boot, struct fatEntry *fat)
+resetDosDirSection(struct bootblock *boot)
 {
 	int b1, b2;
-	cl_t cl;
 	int ret = FSOK;
-
+	struct cluster_chain_descriptor *fat,tofind,*insert;
+	struct fragment *frag,tofind_frag;
+	struct fatcache *cache;
 	b1 = boot->RootDirEnts * 32;
 	b2 = boot->SecPerClust * boot->BytesPerSec;
 
@@ -243,30 +246,50 @@ resetDosDirSection(struct bootblock *boot, struct fatEntry *fat)
 			       boot->RootCl);
 			return FSFATAL;
 		}
-		cl = fat[boot->RootCl].next;
-		if (cl < CLUST_FIRST
-		    || (cl >= CLUST_RSRVD && cl< CLUST_EOFS)
-		    || fat[boot->RootCl].head != boot->RootCl) {
-			if (cl == CLUST_FREE)
-				pwarn("Root directory starts with free cluster\n");
-			else if (cl >= CLUST_RSRVD)
-				pwarn("Root directory starts with cluster marked %s\n",
-				      rsrvdcltype(cl));
-			else {
-				pfatal("Root directory doesn't start a cluster chain");
-				return FSFATAL;
-			}
-			if (ask(1, "Fix")) {
-				fat[boot->RootCl].next = CLUST_FREE;
+		//In fat12 and fat16, the boot->RootCl is zero,you can not find its chain
+		tofind.head = boot->RootCl;
+		fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+		/*we have check the cluster chain in readfatAndcheckfat*/
+		if(!fat){
+			pwarn("can not find Root direntory in cluster chain\n");
+			if(ask(1, "Fix")){
+				tofind_frag.head = boot->RootCl;
+				frag = RB_FIND(FSCK_MSDOS_FRAGMENT,&rb_free_root,&tofind_frag);
+				if(!frag){
+					fsck_err("can not find Root direntory in free chain\n");
+					ret = FSFATAL;
+					goto out;
+				}
+				/*find it in free rb tree,now move it to cluster chain*/
+				fat = New_fatentry();
+				if(!fat)
+					return FSFATAL;
+				fat->head = boot->RootCl;
+				fat->head = 1;
+				cache = New_fatcache();
+				if(!cache)
+					return FSFATAL;
+				cache->head = boot->RootCl;
+				cache->length = 1;
+				add_fatcache_To_ClusterChain(fat,cache);
+				insert = RB_INSERT(FSCK_MSDOS_CACHE,&rb_root,fat);
+				if(insert){
+					fsck_err("%s:fatentry(head:0x%x) exist\n",__func__,fat->head);
+					return FSFATAL;
+				}
+				RB_REMOVE(FSCK_MSDOS_FRAGMENT,&rb_free_root,frag);
+				free(frag);
 				ret = FSFATMOD;
-			} else
+				goto out;
+			}else{
 				ret = FSFATAL;
+				goto out;
+			}
 		}
-
-		fat[boot->RootCl].flags |= FAT_USED;
+		fat->flag |= FAT_USED;
 		rootDir->head = boot->RootCl;
 	}
-
+out:
 	return ret;
 }
 
@@ -304,15 +327,20 @@ finishDosDirSection(void)
  * Delete directory entries between startcl, startoff and endcl, endoff.
  */
 static int
-delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
+delete(int f, struct bootblock *boot, struct cluster_chain_descriptor *fat,cl_t startcl,
     int startoff, cl_t endcl, int endoff, int notlast)
 {
 	u_char *s, *e;
 	loff_t off;
 	int clsz = boot->SecPerClust * boot->BytesPerSec;
-
+	struct fatcache *cache;
+	fsck_debug("delete: %u:%u -->> %u:%u\n",startcl,startoff,endcl,endoff);
 	s = delbuf + startoff;
 	e = delbuf + clsz;
+	if(!fat){
+		pwarn("Can't find cl %d in cluster chain\n",startcl);
+		return FSFATAL;
+	}
 	while (startcl >= CLUST_FIRST && startcl < boot->NumClusters) {
 		if (startcl == endcl) {
 			if (notlast)
@@ -322,7 +350,6 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 		off = startcl * boot->SecPerClust + boot->ClusterOffset;
 		off *= boot->BytesPerSec;
 		if (lseek64(f, off, SEEK_SET) != off) {
-			printf("off = %llu\n", off);
 			perror("Unable to lseek64");
 			return FSFATAL;
 		}
@@ -335,7 +362,6 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 			s += 32;
 		}
 		if (lseek64(f, off, SEEK_SET) != off) {
-			printf("off = %llu\n", off);
 			perror("Unable to lseek64");
 			return FSFATAL;
 		}
@@ -345,16 +371,20 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 		}
 		if (startcl == endcl)
 			break;
-		startcl = fat[startcl].next;
+		//if startcl = 0.it means no next cluster
+		cache = Find_nextclus(fat,startcl,&startcl);
+		if(!cache && !startcl)
+			return FSFATAL;
 		s = delbuf;
 	}
 	return FSOK;
 }
 
 static int
-removede(int f, struct bootblock *boot, struct fatEntry *fat, u_char *start,
+removede(int f, struct bootblock *boot,struct cluster_chain_descriptor *fat, u_char *start,
     u_char *end, cl_t startcl, cl_t endcl, cl_t curcl, char *path, int type)
 {
+	fsck_debug("removede : %u:%u --->> %u:%u \n",startcl,start,endcl,end);
 	switch (type) {
 	case 0:
 		pwarn("Invalid long filename entry for %s\n", path);
@@ -365,6 +395,8 @@ removede(int f, struct bootblock *boot, struct fatEntry *fat, u_char *start,
 	case 2:
 		pwarn("Invalid long filename entry for volume label\n");
 		break;
+	case 3:
+		pwarn("Can't find the associated cluster chain\n");
 	}
 	if (ask(1, "Remove")) {
 		if (startcl != curcl) {
@@ -387,12 +419,14 @@ removede(int f, struct bootblock *boot, struct fatEntry *fat, u_char *start,
  * Check an in-memory file entry
  */
 static int
-checksize(struct bootblock *boot, struct fatEntry *fat, u_char *p,
+checksize(struct bootblock *boot, u_char *p,
     struct dosDirEntry *dir)
 {
 	/*
 	 * Check size on ordinary files
 	 */
+	struct cluster_chain_descriptor *fat,tofind;
+	struct fatcache *cache;
 	int32_t physicalSize;
 
 	if (dir->head == CLUST_FREE)
@@ -400,11 +434,18 @@ checksize(struct bootblock *boot, struct fatEntry *fat, u_char *p,
 	else {
 		if (dir->head < CLUST_FIRST || dir->head >= boot->NumClusters)
 			return FSERROR;
-		physicalSize = fat[dir->head].length * boot->ClusterSize;
+		tofind.head = dir->head;
+		fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+		if(!fat){
+			pwarn("Can't find the cluster chain with head(%u) \n",dir->head);
+			return FSERROR;
+		}
+		physicalSize = fat->length * boot->ClusterSize;
 	}
 	if (physicalSize < dir->size) {
 		pwarn("size of %s is %u, should at most be %u\n",
 		      fullpath(dir), dir->size, physicalSize);
+		fsck_debug("physicalSize:%d ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
 		if (ask(1, "Truncate")) {
 			dir->size = physicalSize;
 			p[28] = (u_char)physicalSize;
@@ -417,14 +458,26 @@ checksize(struct bootblock *boot, struct fatEntry *fat, u_char *p,
 	} else if (physicalSize - dir->size >= boot->ClusterSize) {
 		pwarn("%s has too many clusters allocated\n",
 		      fullpath(dir));
+		fsck_debug("physicalSize:%d ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
 		if (ask(1, "Drop superfluous clusters")) {
 			cl_t cl;
 			u_int32_t sz = 0;
 
-			for (cl = dir->head; (sz += boot->ClusterSize) < dir->size;)
-				cl = fat[cl].next;
-			clearchain(boot, fat, fat[cl].next);
-			fat[cl].next = CLUST_EOF;
+			for (cl = dir->head; (sz += boot->ClusterSize) < dir->size;){
+				cache = Find_nextclus(fat,cl,&cl);
+				if(!cl )
+					return FSERROR;
+				if(cl == CLUST_EOF)
+					break;
+			}
+			//cache = Find_nextclus(fat,cl,&cl);
+			if(!cache && !cl)
+				return FSERROR;
+			//TODO: i don't no why exec clearchain here.when cl != fat.head,clear do nothing
+			//clearchain(boot, fat,cl);
+			//if trunc it ,when next fsck ,the rest will locate in LOST.DIR
+			Trunc(fat,cl);
+			fsck_debug("after truncate ,fat->length = %d \n",fat->length);
 			return FSFATMOD;
 		} else
 			return FSERROR;
@@ -440,22 +493,27 @@ static u_char  dot_dot_header[16]={0x2E, 0x2E, 0x20, 0x20, 0x20, 0x20, 0x20, 0x2
  * Check for missing or broken '.' and '..' entries.
  */
 static int
-check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirEntry *dir)
+check_dot_dot(int f, struct bootblock *boot,struct dosDirEntry *dir)
 {
 	u_char *p, *buf;
 	loff_t off;
 	int last;
 	cl_t cl;
 	int rc=0, n_count;
-
+	struct cluster_chain_descriptor *fat,tofind;
+	struct fatcache *cache;
 	int dot, dotdot;
 	dot = dotdot = 0;
 	cl = dir->head;
-
 	if (dir->parent && (cl < CLUST_FIRST || cl >= boot->NumClusters)) {
 		return rc;
 	}
-
+	tofind.head = dir->head;
+	fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+	if(!fat){
+		pwarn("%s:cannot find cluster chain(%d)\n",__func__,dir->head);
+		return FSFATAL;
+	}
 	do {
 		if (!(boot->flags & FAT32) && !dir->parent) {
 			last = boot->RootDirEnts * 32;
@@ -472,14 +530,11 @@ check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirE
 			return FSFATAL;
 		}
 		if (lseek64(f, off, SEEK_SET) != off) {
-			printf("off = %llu\n", off);
 			perror("Unable to lseek64");
-			free(buf);
 			return FSFATAL;
 		}
 		if (read(f, buf, last) != last) {
 			perror("Unable to read");
-			free(buf);
 			return FSFATAL;
 		}
 		last /= 32;
@@ -502,7 +557,10 @@ check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirE
 		if(!rc)
 			dotdot=1;
 		free(buf);
-	} while ((cl = fat[cl].next) >= CLUST_FIRST && cl < boot->NumClusters);
+		cache = Find_nextclus(fat,cl,&cl);
+		if(!cache && !cl)
+			return FSFATAL;
+	} while (cl >= CLUST_FIRST && cl < boot->NumClusters);
 
 	if (!dot || !dotdot) {
 		if (!dot)
@@ -522,7 +580,7 @@ check_dot_dot(int f, struct bootblock *boot, struct fatEntry *fat,struct dosDirE
  *   - push directories onto the todo-stack
  */
 static int
-readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
+readDosDirSection(int f, struct bootblock *boot,
     struct dosDirEntry *dir)
 {
 	struct dosDirEntry dirent, *d;
@@ -534,10 +592,9 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 	u_int lidx = 0;
 	int shortSum;
 	int mod = FSOK;
-	int n_count=0;
-	int rc=0;
+	struct cluster_chain_descriptor *fat = NULL,tofind;
+	struct fatcache *cache = NULL;
 #define	THISMOD	0x8000			/* Only used within this routine */
-
 	cl = dir->head;
 	if (dir->parent && (cl < CLUST_FIRST || cl >= boot->NumClusters)) {
 		/*
@@ -549,8 +606,17 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 	vallfn = invlfn = empty = NULL;
 	int dot,dotdot;
 	dot = dotdot = 0;
-
+	//FAT32 has boot->Rootcl
+	if((boot->ClustMask == CLUST32_MASK) || dir->parent){
+		tofind.head = dir->head;
+		fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+		if(!fat){
+			fsck_err("%s:can not find cluster chain(head = %u)\n",__func__,dir->head);
+			return FSFATMOD;
+		}
+	}
 	do {
+		struct cluster_chain_descriptor *c_fat;
 		if (!(boot->flags & FAT32) && !dir->parent) {
 			last = boot->RootDirEnts * 32;
 			off = boot->ResSectors + boot->FATs * boot->FATsecs;
@@ -763,9 +829,6 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 						mod |= THISMOD;
 			}
 
-			vallfn = NULL; /* not used any longer */
-			invlfn = NULL;
-
 			if (dirent.size == 0 && !(dirent.flags & ATTR_DIRECTORY)) {
 				if (dirent.head != 0) {
 					pwarn("%s has clusters, but size 0\n",
@@ -774,7 +837,12 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 						p[26] = p[27] = 0;
 						if (boot->ClustMask == CLUST32_MASK)
 							p[20] = p[21] = 0;
-						clearchain(boot, fat, dirent.head);
+						tofind.head = dirent.head;
+						c_fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+						if(c_fat)
+							clearchain(c_fat, dirent.head);
+						else
+							mod |= FSERROR;
 						dirent.head = 0;
 						mod |= THISMOD|FSDIRMOD|FSFATMOD;
 					} else
@@ -789,10 +857,8 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 				 */
 			} else if (dirent.head < CLUST_FIRST
 				   || dirent.head >= boot->NumClusters
-				   || fat[dirent.head].next == CLUST_FREE
-				   || (fat[dirent.head].next >= CLUST_RSRVD
-				       && fat[dirent.head].next < CLUST_EOFS)
-				   || fat[dirent.head].head != dirent.head) {
+				    )
+				    {
 				if (dirent.head == 0)
 					pwarn("%s has no clusters\n",
 					      fullpath(&dirent));
@@ -801,16 +867,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 					pwarn("%s starts with cluster out of range(%u)\n",
 					      fullpath(&dirent),
 					      dirent.head);
-				else if (fat[dirent.head].next == CLUST_FREE)
-					pwarn("%s starts with free cluster\n",
-					      fullpath(&dirent));
-				else if (fat[dirent.head].next >= CLUST_RSRVD)
-					pwarn("%s starts with cluster marked %s\n",
-					      fullpath(&dirent),
-					      rsrvdcltype(fat[dirent.head].next));
-				else
-					pwarn("%s doesn't start a cluster chain\n",
-					      fullpath(&dirent));
+
 				if (dirent.flags & ATTR_DIRECTORY) {
 					if (ask(1, "Remove")) {
 						*p = SLOT_DELETED;
@@ -831,8 +888,26 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 				}
 			}
 
-			if (dirent.head >= CLUST_FIRST && dirent.head < boot->NumClusters)
-				fat[dirent.head].flags |= FAT_USED;
+			if (dirent.head >= CLUST_FIRST && dirent.head < boot->NumClusters){
+				tofind.head = dirent.head;
+				c_fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
+				if (c_fat) {
+					c_fat->flag |= FAT_USED;
+				}
+				else{
+					fsck_warn("can't find cluster chain(head:0x%x) of file:%s \n",dirent.head,fullpath(&dirent));
+					if (vallfn || invlfn) {
+						fsck_warn("Invalid long directory deleted\n");
+						mod |= removede(f, boot, fat,invlfn ? invlfn : vallfn, p,invlfn ? invcl : valcl, -1, 0,fullpath(dir), 3);
+					} else {
+						fsck_warn("Invalid short directory deleted\n");
+						*p = SLOT_DELETED;
+					}
+					return FSDIRMOD;
+				}
+			}
+			vallfn = NULL; /* not used any longer */
+			invlfn = NULL;
 
 			if (dirent.flags & ATTR_DIRECTORY) {
 				/*
@@ -918,7 +993,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 					   a dot (.) entry that points to itself, and a dot-dot (..)
 					   entry that points to its parent.
 					 */
-					if (check_dot_dot(f,boot,fat,&dirent)) {
+					if (check_dot_dot(f,boot,&dirent)) {
 						//mark directory entry as deleted.
 						if (ask(1, "Remove")) {
 							*p = SLOT_DELETED;
@@ -926,7 +1001,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 						} else
 							mod |= FSERROR;
 						continue;
-                    }
+					 }
 				}
 
 				/* create directory tree node */
@@ -937,10 +1012,6 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 				memcpy(d, &dirent, sizeof(struct dosDirEntry));
 				/* link it into the tree */
 				dir->child = d;
-#if 0
-				printf("%s: %s : 0x%02x:head %d, next 0x%0x parent 0x%0x child 0x%0x\n",
-						__func__,d->name,d->flags,d->head,d->next,d->parent,d->child);
-#endif
 				/* Enter this directory into the todo list */
 				if (!(n = newDirTodo())) {
 					perror("No space for todo list");
@@ -950,7 +1021,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 				n->dir = d;
 				pendingDirectories = n;
 			} else {
-				mod |= k = checksize(boot, fat, p, &dirent);
+				mod |= k = checksize(boot, p, &dirent);
 				if (k & FSDIRMOD)
 					mod |= THISMOD;
 			}
@@ -965,7 +1036,14 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 			}
 			mod &= ~THISMOD;
 		}
-	} while ((cl = fat[cl].next) >= CLUST_FIRST && cl < boot->NumClusters);
+		if(boot->ClustMask == CLUST32_MASK || dir->parent){
+			cache = Find_nextclus(fat,cl,&cl);
+			if(!cache && !cl){
+				fsck_err("%s :Find nextclus error \n",__func__);
+				return FSFATAL;
+			}
+		}
+	} while (cl  >= CLUST_FIRST && cl < boot->NumClusters);
 	if (invlfn || vallfn)
 		mod |= removede(f, boot, fat,
 				invlfn ? invlfn : vallfn, p,
@@ -975,14 +1053,13 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 }
 
 int
-handleDirTree(int dosfs, struct bootblock *boot, struct fatEntry *fat)
+handleDirTree(int dosfs, struct bootblock *boot)
 {
 	int mod;
-
-	mod = readDosDirSection(dosfs, boot, fat, rootDir);
+	fsck_debug("rootDir->head :%d\n",rootDir->head);
+	mod = readDosDirSection(dosfs, boot, rootDir);
 	if (mod & FSFATAL)
 		return FSFATAL;
-
 	/*
 	 * process the directory todo list
 	 */
@@ -1000,11 +1077,10 @@ handleDirTree(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 		/*
 		 * handle subdirectory
 		 */
-		mod |= readDosDirSection(dosfs, boot, fat, dir);
+		mod |= readDosDirSection(dosfs, boot, dir);
 		if (mod & FSFATAL)
 			return FSFATAL;
 	}
-
 	return mod;
 }
 
@@ -1014,20 +1090,25 @@ handleDirTree(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 static u_char *lfbuf;
 static cl_t lfcl;
 static loff_t lfoff;
-
+static struct cluster_chain_descriptor *lostdirfat;
 int
-reconnect(int dosfs, struct bootblock *boot, struct fatEntry *fat, cl_t head)
+reconnect(int dosfs, struct bootblock *boot, struct cluster_chain_descriptor *fat, cl_t head)
 {
 	struct dosDirEntry d;
+	struct fatcache *cache = NULL;
+	struct cluster_chain_descriptor tofind;
 	u_char *p;
 
 	if (!ask(1, "Reconnect"))
 		return FSERROR;
-
+	//find the lost dir in root directory
 	if (!lostDir) {
 		for (lostDir = rootDir->child; lostDir; lostDir = lostDir->next) {
-			if (!strcmp(lostDir->name, LOSTDIR))
+			if (!strcmp(lostDir->name, LOSTDIR)){
+				tofind.head = lostDir->head;
+				lostdirfat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
 				break;
+			}
 		}
 		if (!lostDir) {		/* Create LOSTDIR?		XXX */
 			pwarn("No %s directory\n", LOSTDIR);
@@ -1045,13 +1126,20 @@ reconnect(int dosfs, struct bootblock *boot, struct fatEntry *fat, cl_t head)
 		p = lfbuf;
 	while (1) {
 		if (p)
+			//find an empty or deleted direntry in lostdir
 			for (; p < lfbuf + boot->ClusterSize; p += 32)
 				if (*p == SLOT_EMPTY
 				    || *p == SLOT_DELETED)
 					break;
 		if (p && p < lfbuf + boot->ClusterSize)
 			break;
-		lfcl = p ? fat[lfcl].next : lostDir->head;
+		if(p){
+			cache = Find_nextclus(lostdirfat,lfcl,&lfcl);
+		}
+		else{
+			lfcl = lostDir->head;
+		}
+	//	lfcl = p ? fat[lfcl].next : lostDir->head;
 		if (lfcl < CLUST_FIRST || lfcl >= boot->NumClusters) {
 			/* Extend LOSTDIR?				XXX */
 			pwarn("No space in %s\n", LOSTDIR);
@@ -1074,7 +1162,7 @@ reconnect(int dosfs, struct bootblock *boot, struct fatEntry *fat, cl_t head)
 	(void)snprintf(d.name, sizeof(d.name), "%u", head);
 	d.flags = 0;
 	d.head = head;
-	d.size = fat[head].length * boot->ClusterSize;
+	d.size = fat->length * boot->ClusterSize;
 
 	memset(p, 0, 32);
 	memset(p, ' ', 11);
@@ -1089,7 +1177,7 @@ reconnect(int dosfs, struct bootblock *boot, struct fatEntry *fat, cl_t head)
 	p[29] = (u_char)(d.size >> 8);
 	p[30] = (u_char)(d.size >> 16);
 	p[31] = (u_char)(d.size >> 24);
-	fat[head].flags |= FAT_USED;
+	fat->flag |= FAT_USED;
 	if (lseek64(dosfs, lfoff, SEEK_SET) != lfoff
 	    || write(dosfs, lfbuf, boot->ClusterSize) != boot->ClusterSize) {
 		perror("could not write LOST.DIR");

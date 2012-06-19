@@ -56,7 +56,7 @@ extern struct dosDirEntry *rootDir;
  * function declarations
  */
 int ask(int, const char *, ...);
-
+int _readfat(int fs, struct bootblock *boot, int no, u_char **buffer);
 /*
  * Check the dirty flag.  If the file system is clean, then return 1.
  * Otherwise, return 0 (this includes the case of FAT12 file systems --
@@ -80,6 +80,7 @@ int checkfilesys(const char *);
 #define	FSFATAL		16		/* Some unrecoverable error occured */
 #define FSDIRTY		32		/* File system is dirty */
 #define FSFIXFAT	64		/* Fix file system FAT */
+#define FSOOM		128		/* the check may cause system OOM */
 
 /*
  * read a boot block in a machine independend fashion and translate
@@ -96,30 +97,27 @@ int writefsinfo(int, struct bootblock *);
  * Read one of the FAT copies and return a pointer to the new
  * allocated array holding our description of it.
  */
-int readfat(int, struct bootblock *, int, struct fatEntry **);
 
 /*
  * Check two FAT copies for consistency and merge changes into the
  * first if neccessary.
  */
-int comparefat(struct bootblock *, struct fatEntry *, struct fatEntry *, int);
-
+int comparefat(struct bootblock *, u_char *, u_char *, int);
 /*
  * Check a FAT
  */
-int checkfat(struct bootblock *, struct fatEntry *);
-
+int checkfat(int fs, struct bootblock *boot, int no,u_char *buffer);
 /*
  * Write back FAT entries
  */
-int writefat(int, struct bootblock *, struct fatEntry *, int);
+int writefat(int, struct bootblock *, int);
 
 /*
  * Read a directory
  */
-int resetDosDirSection(struct bootblock *, struct fatEntry *);
+int resetDosDirSection(struct bootblock *);
 void finishDosDirSection(void);
-int handleDirTree(int, struct bootblock *, struct fatEntry *);
+int handleDirTree(int, struct bootblock *);
 
 /*
  * Cross-check routines run after everything is completely in memory
@@ -127,11 +125,11 @@ int handleDirTree(int, struct bootblock *, struct fatEntry *);
 /*
  * Check for lost cluster chains
  */
-int checklost(int, struct bootblock *, struct fatEntry *);
+int checklost(int, struct bootblock *);
 /*
  * Try to reconnect a lost cluster chain
  */
-int reconnect(int, struct bootblock *, struct fatEntry *, cl_t);
+int reconnect(int, struct bootblock *, struct cluster_chain_descriptor *, cl_t);
 void finishlf(void);
 
 /*
@@ -145,6 +143,5 @@ char *rsrvdcltype(cl_t);
 /*
  * Clear a cluster chain in a FAT
  */
-void clearchain(struct bootblock *, struct fatEntry *, cl_t);
-
+void clearchain(struct cluster_chain_descriptor *, cl_t);
 #endif

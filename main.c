@@ -48,13 +48,12 @@ static const char rcsid[] =
 
 #include "fsutil.h"
 #include "ext.h"
-
+#include "fatcache.h"
 int alwaysno;		/* assume "no" for all questions */
 int alwaysyes;		/* assume "yes" for all questions */
 int preen;		/* set when preening */
 int rdonly;		/* device is opened read only (supersedes above) */
 int skipclean;		/* skip clean file systems if preening */
-
 static void usage(void);
 
 static void
@@ -135,7 +134,7 @@ ask(int def, const char *fmt, ...)
 
 	char prompt[256];
 	int c;
-
+	fsck_info("%s ? \n",fmt);
 	if (preen) {
 		if (rdonly)
 			def = 0;

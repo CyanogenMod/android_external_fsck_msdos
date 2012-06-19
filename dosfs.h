@@ -38,9 +38,10 @@
 #define DOSFS_H
 
 #define DOSBOOTBLOCKSIZE 512
-
-typedef	u_int32_t	cl_t;	/* type holding a cluster number */
-
+#include "tree.h"
+typedef unsigned int cl_t;	/* type holding a cluster number */
+typedef unsigned int u_int;
+typedef unsigned int u_int32_t;
 /*
  * architecture independent description of all the info stored in a
  * FAT boot block.
@@ -86,11 +87,18 @@ struct bootblock {
 	u_int	NumBad;			/* # of bad clusters */
 };
 
-struct fatEntry {
-	cl_t	next;			/* pointer to next cluster */
-	cl_t	head;			/* pointer to start of chain */
-	u_int32_t length;		/* number of clusters on chain */
-	int	flags;			/* see below */
+
+struct fatcache {
+	struct fatcache *next;
+	cl_t head;
+	u_int32_t length;
+};
+struct cluster_chain_descriptor {
+	struct fatcache* child;
+	cl_t    head;                   /* pointer to start of chain */
+	u_int32_t length;               /* how many cluster this file contains*/
+	RB_ENTRY(cluster_chain_descriptor) rb;
+	u_int32_t flag;
 };
 
 #define	CLUST_FREE	0		/* 0 means cluster is free */
@@ -124,10 +132,10 @@ struct dosDirEntry {
 		*child;			/* if this is a directory */
 	char name[8+1+3+1];		/* alias name first part */
 	char lname[DOSLONGNAMELEN];	/* real name */
-	uint flags;			/* attributes */
+	u_int32_t flags;			/* attributes */
 	cl_t head;			/* cluster no */
 	u_int32_t size;			/* filesize in bytes */
-	uint fsckflags;			/* flags during fsck */
+	u_int32_t fsckflags;			/* flags during fsck */
 };
 /* Flags in fsckflags: */
 #define	DIREMPTY	1

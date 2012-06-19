@@ -45,6 +45,7 @@ static const char rcsid[] =
 #include <unistd.h>
 
 #include "ext.h"
+#include "fatcache.h"
 #include "fsutil.h"
 
 int
@@ -73,6 +74,7 @@ readboot(dosfs, boot)
 	/* decode bios parameter block */
 	boot->BytesPerSec = block[11] + (block[12] << 8);
 	boot->SecPerClust = block[13];
+	fsck_debug("sectors Per cluster :%d \n",boot->SecPerClust);
 	boot->ResSectors = block[14] + (block[15] << 8);
 	boot->FATs = block[16];
 	boot->RootDirEnts = block[17] + (block[18] << 8);
@@ -85,6 +87,16 @@ readboot(dosfs, boot)
 	boot->HugeSectors = block[32] + (block[33] << 8) + (block[34] << 16) + (block[35] << 24);
 
 	boot->FATsecs = boot->FATsmall;
+
+	/* This variable is 0 in some filesystems such as exFat.
+	 * It will cause divided by zero error in the following
+	 * steps. Just return in this case.
+	 */
+	if (boot->BytesPerSec == 0) {
+		fsck_err("Invalid sector size: %u", boot->BytesPerSec);
+		exit(2);
+		return FSFATAL;
+	}
 
 	if (!boot->RootDirEnts)
 		boot->flags |= FAT32;
@@ -212,16 +224,18 @@ readboot(dosfs, boot)
 		/* Check backup FSInfo?					XXX */
 	}
 
+	boot->ClusterOffset = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
+	    / boot->BytesPerSec
+	    + boot->ResSectors
+	    + boot->FATs * boot->FATsecs
+	    - CLUST_FIRST * boot->SecPerClust;
+	fsck_debug("boot->ClusterOffset :%d \n",boot->ClusterOffset);
 	if (boot->BytesPerSec % DOSBOOTBLOCKSIZE != 0) {
 		pfatal("Invalid sector size: %u", boot->BytesPerSec);
 		return FSFATAL;
 	}
 	if (boot->SecPerClust == 0) {
 		pfatal("Invalid cluster size: %u", boot->SecPerClust);
-		return FSFATAL;
-	}
-	if (boot->BytesPerSec == 0) {
-		pfatal("Invalid sector size: %u", boot->BytesPerSec);
 		return FSFATAL;
 	}
 	if (boot->FATs == 0) {
@@ -233,13 +247,6 @@ readboot(dosfs, boot)
 		boot->NumSectors = boot->Sectors;
 	} else
 		boot->NumSectors = boot->HugeSectors;
-
-	boot->ClusterOffset = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
-	    / boot->BytesPerSec
-	    + boot->ResSectors
-	    + boot->FATs * boot->FATsecs
-	    - CLUST_FIRST * boot->SecPerClust;
-
 	boot->NumClusters = (boot->NumSectors - boot->ClusterOffset) / boot->SecPerClust;
 
 	if (boot->flags&FAT32)

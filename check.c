@@ -47,7 +47,8 @@ static const char rcsid[] =
 
 #include "ext.h"
 #include "fsutil.h"
-
+#include "fatcache.h"
+#include "fragment.h"
 /*
  * If the FAT > this size then skip comparing, lest we risk
  * OOMing the framework. in the future we need to just re-write
@@ -60,13 +61,12 @@ checkfilesys(const char *fname)
 {
 	int dosfs;
 	struct bootblock boot;
-	struct fatEntry *fat = NULL;
+	u_char *fat ,*fat2;
 	int i, finish_dosdirsection=0;
 	int mod = 0;
 	int ret = 8;
-        int quiet = 0;
-        int skip_fat_compare = 0;
-
+	int quiet = 0;
+	int skip_fat_compare = 0;
 	rdonly = alwaysno;
 	if (!quiet)
 		printf("** %s", fname);
@@ -89,10 +89,22 @@ checkfilesys(const char *fname)
 
 	if (readboot(dosfs, &boot) == FSFATAL) {
 		close(dosfs);
-		printf("\n");
 		return 8;
 	}
 
+	switch(boot.ClustMask){
+		case CLUST32_MASK:
+			fsck_info("FAT32 Filesystem\n");
+			break;
+		case CLUST16_MASK:
+			fsck_info("FAT16 Fielsystem\n");
+			break;
+		default:
+			fsck_info("FAT12 Filesystem\n");
+			break;
+	}
+	fsck_debug("Using cluster_chain_descriptor\n");
+	fsck_info("Total clusters %u \n",boot.NumClusters);
 	if (skipclean && preen && checkdirty(dosfs, &boot)) {
 		printf("%s: ", fname);
 		printf("FILESYSTEM CLEAN; SKIPPING CHECKS\n");
@@ -100,7 +112,7 @@ checkfilesys(const char *fname)
 		goto out;
 	}
 
-        if (((boot.FATsecs * boot.BytesPerSec) / 1024) > FAT_COMPARE_MAX_KB)
+	if (((boot.FATsecs * boot.BytesPerSec) / 1024) > FAT_COMPARE_MAX_KB)
             skip_fat_compare = 1;
 
 	if (!quiet)  {
@@ -112,68 +124,62 @@ checkfilesys(const char *fname)
 			printf("** Phase 1 - Read FAT\n");
 	}
 
-	mod |= readfat(dosfs, &boot, boot.ValidFat >= 0 ? boot.ValidFat : 0, &fat);
-	if (mod & FSFATAL) {
-		printf("Fatal error during readfat()\n");
-		close(dosfs);
-		return 8;
+	ret = !_readfat(dosfs, &boot,boot.ValidFat >= 0 ? boot.ValidFat : 0,&fat);
+	if (ret) {
+		fsck_debug("Fatal error during _readfat() for comparison\n");
+		goto out;
 	}
 
 	if (!skip_fat_compare && boot.ValidFat < 0)
 		for (i = 1; i < (int)boot.FATs; i++) {
-			struct fatEntry *currentFat;
+			//just check the FAT
+			ret = !_readfat(dosfs, &boot,i,&fat2);
 
-			mod |= readfat(dosfs, &boot, i, &currentFat);
-
-			if (mod & FSFATAL) {
-				printf("Fatal error during readfat() for comparison\n");
+			if (ret) {
+				printf("Fatal error during _readfat() for comparison\n");
 				goto out;
 			}
-
-			mod |= comparefat(&boot, fat, currentFat, i);
-			free(currentFat);
+			/*have modified comparefat() and subfunction clustdiffer*/
+			mod |= comparefat(&boot, fat, fat2, i);
+			free(fat2);
 			if (mod & FSFATAL) {
 				printf("Fatal error during FAT comparison\n");
 				goto out;
 			}
 		}
-
-	if (!quiet)
-		printf("** Phase 2 - Check Cluster Chains\n");
-
-	mod |= checkfat(&boot, fat);
+	fsck_info("** Phase 2 - Check Cluster Chains \n");
+	mod |= checkfat(dosfs, &boot, boot.ValidFat >= 0 ? boot.ValidFat : 0, fat);
 	if (mod & FSFATAL) {
-		printf("Fatal error during FAT check\n");
-		goto out;
+		fsck_info("Fatal error during  checkfat()\n");
+		close(dosfs);
+		return 8;
 	}
 	/* delay writing FATs */
 
 	if (!quiet)
 		printf("** Phase 3 - Checking Directories\n");
-
-	mod |= resetDosDirSection(&boot, fat);
+	mod |= resetDosDirSection(&boot);
 	finish_dosdirsection = 1;
 	if (mod & FSFATAL) {
 		printf("Fatal error during resetDosDirSection()\n");
 		goto out;
 	}
 	/* delay writing FATs */
-
-	mod |= handleDirTree(dosfs, &boot, fat);
+	mod |= handleDirTree(dosfs, &boot);
 	if (mod & FSFATAL)
 		goto out;
 
 	if (!quiet)
 		printf("** Phase 4 - Checking for Lost Files\n");
 
-	mod |= checklost(dosfs, &boot, fat);
+	mod |= checklost(dosfs, &boot);
 	if (mod & FSFATAL)
 		goto out;
 
 	/* now write the FATs */
 	if (mod & FSFATMOD) {
 		if (ask(1, "Update FATs")) {
-			mod |= writefat(dosfs, &boot, fat, mod & FSFIXFAT);
+			mod |= writefat(dosfs, &boot, mod & FSFIXFAT);
 			if (mod & FSFATAL) {
 				printf("Fatal error during writefat()\n");
 				goto out;
@@ -199,7 +205,7 @@ checkfilesys(const char *fname)
 
 			if (mod & FSDIRTY) {
 				pwarn("MARKING FILE SYSTEM CLEAN\n");
-				mod |= writefat(dosfs, &boot, fat, 1);
+				mod |= writefat(dosfs, &boot, 1);
 			} else {
 				pwarn("\n***** FILE SYSTEM IS LEFT MARKED AS DIRTY *****\n");
 				mod |= FSERROR; /* file system not clean */
@@ -212,12 +218,13 @@ checkfilesys(const char *fname)
 
 	ret = 0;
 
-    out:
+out:
+	free_rb_tree();
+	free_fragment_tree(&rb_free_root);
+	free_fragment_tree(&rb_bad_root);
 	if (finish_dosdirsection)
 		finishDosDirSection();
-	free(fat);
 	close(dosfs);
-
 	if (mod & (FSFATMOD|FSDIRMOD)) {
 		pwarn("\n***** FILE SYSTEM WAS MODIFIED *****\n");
 		return 4; 
