@@ -702,11 +702,25 @@ checklost(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 			}
 		}
 
+		if (boot->NumFree) {
+			if ((boot->FSNext >= boot->NumClusters) || (fat[boot->FSNext].next != CLUST_FREE)) {
+				pwarn("Next free cluster in FSInfo block (%u) not free\n",
+				      boot->FSNext);
+				if (ask(1, "Fix"))
+					for (head = CLUST_FIRST; head < boot->NumClusters; head++)
+						if (fat[head].next == CLUST_FREE) {
+							boot->FSNext = head;
+							ret = 1;
+							break;
+						}
+			}
+        }
+
 		if (boot->FSNext > boot->NumClusters  ) {
 			pwarn("FSNext block (%d) not correct NumClusters (%d)\n",
 					boot->FSNext, boot->NumClusters);
 			boot->FSNext=CLUST_FIRST; // boot->FSNext can have -1 value.
-		}
+	    }
 
 		if (boot->NumFree && fat[boot->FSNext].next != CLUST_FREE) {
 			pwarn("Next free cluster in FSInfo block (%u) not free\n",
@@ -718,7 +732,8 @@ checklost(int dosfs, struct bootblock *boot, struct fatEntry *fat)
 						ret = 1;
 						break;
 					}
-		}
+	    }
+
 		if (ret)
 			mod |= writefsinfo(dosfs, boot);
 	}

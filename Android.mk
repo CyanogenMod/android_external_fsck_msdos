@@ -1,4 +1,4 @@
-ifneq ($(TARGET_SIMULATOR), true)
+ifneq ($(BOARD_USES_CUSTOM_FSCK_MSDOS),true)
 
 LOCAL_PATH := $(call my-dir)
 
