@@ -193,12 +193,6 @@ readboot(dosfs, boot)
 		/* Check backup FSInfo?					XXX */
 	}
 
-	boot->ClusterOffset = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
-	    / boot->BytesPerSec
-	    + boot->ResSectors
-	    + boot->FATs * boot->FATsecs
-	    - CLUST_FIRST * boot->SecPerClust;
-
 	if (boot->BytesPerSec % DOSBOOTBLOCKSIZE != 0) {
 		pfatal("Invalid sector size: %u", boot->BytesPerSec);
 		return FSFATAL;
@@ -207,11 +201,26 @@ readboot(dosfs, boot)
 		pfatal("Invalid cluster size: %u", boot->SecPerClust);
 		return FSFATAL;
 	}
+	if (boot->BytesPerSec == 0) {
+		pfatal("Invalid sector size: %u", boot->BytesPerSec);
+		return FSFATAL;
+	}
+	if (boot->FATs == 0) {
+		pfatal("Invalid number of FATs: %u", boot->FATs);
+		return FSFATAL;
+	}
 	if (boot->Sectors) {
 		boot->HugeSectors = 0;
 		boot->NumSectors = boot->Sectors;
 	} else
 		boot->NumSectors = boot->HugeSectors;
+
+	boot->ClusterOffset = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
+	    / boot->BytesPerSec
+	    + boot->ResSectors
+	    + boot->FATs * boot->FATsecs
+	    - CLUST_FIRST * boot->SecPerClust;
+
 	boot->NumClusters = (boot->NumSectors - boot->ClusterOffset) / boot->SecPerClust;
 
 	if (boot->flags&FAT32)
