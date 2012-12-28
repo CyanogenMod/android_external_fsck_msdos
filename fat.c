@@ -889,8 +889,12 @@ checklost(int dosfs, struct bootblock *boot)
 	struct cluster_chain_descriptor *fat ;
 	fat = RB_MIN(FSCK_MSDOS_CACHE,&rb_root);
 	if(!fat){
-		fsck_err("%s:rb_root tree is empty\n",__func__);
-		return FSFATAL;
+		fsck_info("%s:rb_root tree is empty\n",__func__);
+		//After format FAT16,nothing left
+		if(boot->ClustMask & CLUST16_MASK)
+			return FSOK;
+		else
+			return FSFATAL;
 	}
 	while(fat){
 		if(fat->flag & FAT_USED){
