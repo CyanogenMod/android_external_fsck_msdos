@@ -897,13 +897,16 @@ readDosDirSection(int f, struct bootblock *boot,
 				else{
 					fsck_warn("can't find cluster chain(head:0x%x) of file:%s \n",dirent.head,fullpath(&dirent));
 					if (vallfn || invlfn) {
-						fsck_warn("Invalid long directory deleted\n");
+						fsck_warn("Invalid long directory\n");
 						mod |= removede(f, boot, fat,invlfn ? invlfn : vallfn, p,invlfn ? invcl : valcl, -1, 0,fullpath(dir), 3);
 					} else {
-						fsck_warn("Invalid short directory deleted\n");
-						*p = SLOT_DELETED;
+						fsck_warn("Invalid short directory\n");
+						if(ask(1, "Delete")){
+							*p = SLOT_DELETED;
+							mod |= THISMOD|FSDIRMOD;
+						}else
+							mod |= FSERROR;
 					}
-					return FSDIRMOD;
 				}
 			}
 			vallfn = NULL; /* not used any longer */
