@@ -203,10 +203,7 @@ struct fatcache* Find_nextclus(struct cluster_chain_descriptor* fat,unsigned int
 		fsck_warn("Not find the cluster after cluster %d\n",clus);
 		return (struct fatcache*)0;
 	}
-	if(clus < fat->head){
-		fsck_warn("out of range,clus: %d ,fat->head:%d\n",clus,fat->head);
-		return (struct fatcache*)0;
-	}
+
 	while(cache){
 		if(clus >= cache->head && clus <= cache->head + cache->length -2 ){
 			*cl =  clus + 1;
