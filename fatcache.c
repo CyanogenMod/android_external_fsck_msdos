@@ -105,7 +105,7 @@ void SetNextClusToFAT(struct bootblock*boot,u_char*fat ,unsigned int cl ,unsigne
 			*p++ = (u_char)(next >>8);
 			*p++ = (u_char)(next >> 16);
 			*p &= 0xf0;
-			*p = (next >> 24) & 0x0f;
+			*p |= (next >> 24) & 0x0f;
 			break;
 
 		case CLUST16_MASK:
