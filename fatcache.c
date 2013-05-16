@@ -44,6 +44,15 @@ int fsck_msdos_cache_compare(struct cluster_chain_descriptor *fat1,struct cluste
 }
 struct FSCK_MSDOS_CACHE rb_root;
 RB_GENERATE(FSCK_MSDOS_CACHE,cluster_chain_descriptor,rb,fsck_msdos_cache_compare);
+
+/*
+ *Function GetNextClusFromFAT
+ *PURPUSE: reconvert cluster fat from FAT table in memory
+ *PARAMETERS:
+ * boot -> pointer to the boot sector of FAT
+ * fatable -> pointer to the FAT table in memory
+ * clust ->get the next cluster of paramter clust
+ */
 unsigned int GetNextClusFromFAT( struct bootblock*boot,u_char*fatable,unsigned int clust)
 {
 	unsigned int nextclus;
@@ -72,6 +81,15 @@ unsigned int GetNextClusFromFAT( struct bootblock*boot,u_char*fatable,unsigned i
 	return nextclus;
 }
 
+/*
+ *Function SetNextClusToFAT
+ *PURPUSE: reconvert FAT table from cluster fats when write modified FAT table to media
+ *PARAMETERS:
+ *	boot -> pointer to the boot sector of FAT
+ *	fat -> pointer to the FAT table in memory
+ *	cl ->set the next cluster of paramter cl
+ *	next -> the  next cluster of cl
+ */
 void SetNextClusToFAT(struct bootblock*boot,u_char*fat ,unsigned int cl ,unsigned int next)
 {
 	/*fat must point to the head of FAT*/
@@ -110,9 +128,11 @@ void SetNextClusToFAT(struct bootblock*boot,u_char*fat ,unsigned int cl ,unsigne
 
 	}
 }
-
-/*
- *dump a cluster chain for test
+ /*
+ *Function Dump_fatentry
+ *PURPUSE: dump cluster fat information for debug
+ *PARAMETERS:
+ * fat -> pointer to a cluster fat descripor
  */
 void Dump_fatentry(struct cluster_chain_descriptor *fat)
 {
@@ -130,6 +150,15 @@ void Dump_fatentry(struct cluster_chain_descriptor *fat)
 	fsck_info("EOF\n");
 }
 
+/*
+ *Function add_fatcache_To_Clusterfat
+ *PURPUSE: add continuous clusters to cluster fat
+ *PARAMETERS:
+ * fatentry -> pointer to a cluster fat descripor which this fatcache be added to
+ * new -> a new fatcache which represent some continuous clusters
+ *NOTE: this function will update length in cluster_fat_descriptor
+ * pls compare this with function add_fatcache_Totail
+ */
 int add_fatcache_To_ClusterChain(struct cluster_chain_descriptor *fatentry ,struct fatcache *new)
 {
 	struct fatcache *cache = fatentry->child;
@@ -154,10 +183,15 @@ int add_fatcache_To_ClusterChain(struct cluster_chain_descriptor *fatentry ,stru
 	fatentry->length += new->length;
 	return 0;
 }
+
 /*
- *Function : add_fatcache_Totail
- *this function is used to merge two existing cluster chain
- *It just add a fatcache to the tail of another fatentry
+ *Function add_fatcache_Totail_WithOutUpdate
+ *PURPUSE: add a fatcache to the tail of another cluster_fat_descriptor,be used to merge two existing cluster fat
+ *PARAMETERS:
+ * fatentry -> pointer to a cluster fat descripor which this fatcache be added to
+ * new -> a new fatcache which represent some continuous clusters
+ *NOTE: this function will NOT update length in cluster_fat_descriptor
+ * pls compare this with function add_fatcache_To_Clusterfat
  */
 int add_fatcache_Totail(struct cluster_chain_descriptor *fatentry ,struct fatcache *new)
 {
@@ -173,9 +207,18 @@ int add_fatcache_Totail(struct cluster_chain_descriptor *fatentry ,struct fatcac
 	cache->next = new;
 	return 0;
 }
-/*
+
+ /*
+ *Function Find_cache
+ *PURPUSE: find a fatcache from cluster_fat_descriptor by cluster number cl
+ *PARAMETERS:
+ * fat -> pointer to a cluster fat descripor
+ * cl -> cluster number
+ * prev_cache-> the prev fatcache of OUTPUT
+ *OUTPUT:
+ *  return a fatcache which contain cluster cl
  *NOTE:
- *if *prev_cache = return cache,that means the cache we find in cluster chain is the first one
+ * if *prev_cache = return cache,that means the cache we find in cluster fat is the first one
  */
 struct fatcache *Find_cache(struct cluster_chain_descriptor *fat,unsigned int cl ,struct fatcache**prev_cache)
 {
@@ -193,8 +236,18 @@ struct fatcache *Find_cache(struct cluster_chain_descriptor *fat,unsigned int cl
 }
 
 /*
-*find the next cluster from fatentry
-*/
+ *Function Find_nextclus
+ *PURPUSE: find the next cluster number of clus
+ *PARAMETERS:
+ * fat -> pointer to a cluster fat descripor
+ * clus -> find the next cluster of cluster number clus
+ * cl -> the next cluster number will returned
+ *OUTPUT:
+ *  return a fatcache which contain the next cluster
+ *NOTE:
+ * if returned fatcache is null and *cl = 0 ,that means DON'T find the next cluster from the given cluster fat
+ * if returned fatcache is null but *cl != 0 ,that means clus is the last cluster of the given cluster fat
+ */
 struct fatcache* Find_nextclus(struct cluster_chain_descriptor* fat,unsigned int clus, unsigned int* cl)
 {
 	struct fatcache* cache = fat->child;
@@ -223,6 +276,14 @@ struct fatcache* Find_nextclus(struct cluster_chain_descriptor* fat,unsigned int
 	}
 	return EMPTY_CACHE;
 }
+
+/*
+ *Function delete_fatcache_below
+ *PURPUSE: delete all the fatcache below a given fatcache in a given cluster fat
+ *PARAMETERS:
+ * fatentry -> pointer to a cluster fat descripor
+ * cache -> the fatcache whose below fatcache will be removed
+ */
 int delete_fatcache_below(struct cluster_chain_descriptor * fatentry,struct fatcache*cache)
 {
 	struct fatcache *curr = cache,*next,*last;
@@ -244,7 +305,14 @@ int delete_fatcache_below(struct cluster_chain_descriptor * fatentry,struct fatc
 	return 0;
 }
 
-/*remove clusters after cl*/
+/*
+ *Function Trunc
+ *PURPUSE: delete all the clusters after cl from a given cluster fat
+ *PARAMETERS:
+ * fat -> pointer to a cluster fat descripor
+ * cl -> the cluster whose below clusters will be removed
+ *NOTE: this function was used to handle the issue when a file has incorrect cluster numbers
+ */
 void Trunc(struct cluster_chain_descriptor *fat, unsigned int cl)
 {
 	fsck_info("fat :%p ,cl : %d \n",fat,cl);
