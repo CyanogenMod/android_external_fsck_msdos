@@ -29,6 +29,7 @@
 #include "dosfs.h"
 #include "ext.h"
 #include "fatcache.h"
+#include "fragment.h"
 #include "fsutil.h"
 #include <stdio.h>
 #include <unistd.h>
@@ -287,6 +288,8 @@ struct fatcache* Find_nextclus(struct cluster_chain_descriptor* fat,unsigned int
 int delete_fatcache_below(struct cluster_chain_descriptor * fatentry,struct fatcache*cache)
 {
 	struct fatcache *curr = cache,*next,*last;
+	struct fragment *frag,*insert;
+
 	last = cache;
 	if(!cache || !fatentry){
 		fsck_warn("%s:NULL pointer\n",__func__);
@@ -299,6 +302,18 @@ int delete_fatcache_below(struct cluster_chain_descriptor * fatentry,struct fatc
 		curr = next;
 		next = next->next;
 		fatentry->length -= curr->length;
+		frag = New_fragment();
+		if(!frag){
+			fsck_err("%s: No space left\n",__func__);
+			goto free;
+		}
+		/*when clear chain or Trunc ,move this cluster cache to free tree for writefat()*/
+		frag->head = curr->head;
+		curr->length = curr->length;
+		insert = RB_INSERT(FSCK_MSDOS_FRAGMENT,&rb_free_root,frag);
+		if(insert)
+		fsck_warn("%s:fragment(head:0x%x) exist\n",__func__,frag->head);
+free:
 		free((void*)curr);
 	}
 	last->next = NULL;
@@ -313,18 +328,35 @@ int delete_fatcache_below(struct cluster_chain_descriptor * fatentry,struct fatc
  * cl -> the cluster whose below clusters will be removed
  *NOTE: this function was used to handle the issue when a file has incorrect cluster numbers
  */
-void Trunc(struct cluster_chain_descriptor *fat, unsigned int cl)
+void Trunc(struct bootblock *boot, struct cluster_chain_descriptor *fat, unsigned int cl)
 {
-	fsck_info("fat :%p ,cl : %d \n",fat,cl);
-	struct fatcache*prev ;
-	struct fatcache*cache =	Find_cache(fat,cl,&prev);
-	if(!cache)
-		return ;
-	delete_fatcache_below(fat,cache);
-	cache->length = cl - cache->head + 1;
-	fat->length -= (cache->length - (cl - cache->head) - 1);
-}
+	struct fatcache *prev , *cache = Find_cache(fat,cl,&prev);
+	unsigned int currlen = 0,org_chain_len = fat->length;
+	struct fragment *frag,*insert;
+	fsck_info("cluster chain :%p ,cl : %d \n",fat,cl);
 
+	if(!cache)
+		return;
+	delete_fatcache_below(fat,cache);
+	currlen = cl - cache->head + 1;
+	if(currlen != cache->length){
+		frag = New_fragment();
+		if(!frag){
+			fsck_err("%s ,No space left\n",__func__);
+			goto re_calc;
+		}
+		frag->head = cl + 1;
+		frag->length = cache->length - currlen;
+		insert = RB_INSERT(FSCK_MSDOS_FRAGMENT,&rb_free_root,frag);
+		if(insert)
+		fsck_info("%s:fragment(head:0x%x) exist\n",__func__,frag->head);
+   }
+re_calc:
+	fat->length -= (cache->length - currlen);
+	cache->length = currlen;
+	/*re-calc Numfree*/
+	boot->NumFree += (org_chain_len - fat->length);
+}
 struct cluster_chain_descriptor* New_fatentry(void)
 {
 		struct cluster_chain_descriptor *fat;

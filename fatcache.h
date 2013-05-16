@@ -79,7 +79,7 @@ struct fatcache *Find_cache(struct cluster_chain_descriptor *fat,unsigned int cl
 /*find the next cluster*/
 struct fatcache	*Find_nextclus(struct cluster_chain_descriptor* fat,unsigned int clus, unsigned int* cl);
 int delete_fatcache_below(struct cluster_chain_descriptor* fatentry,struct fatcache*cache);
-void Trunc(struct cluster_chain_descriptor *fat, unsigned int cl);
+void Trunc(struct bootblock *boot, struct cluster_chain_descriptor *fat, unsigned int cl);
 void free_rb_tree(void);
 /*for test*/
 void Dump_fatentry(struct cluster_chain_descriptor *fat);

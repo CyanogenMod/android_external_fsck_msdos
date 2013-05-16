@@ -52,7 +52,7 @@ static const char rcsid[] =
 #include "fragment.h"
 static int checkclnum(struct bootblock *, cl_t, cl_t *);
 static int clustdiffer(cl_t, cl_t *, cl_t *, int,int *);
-static int tryclear(struct cluster_chain_descriptor *, cl_t, cl_t *);
+static int tryclear(struct bootblock* ,struct cluster_chain_descriptor *, cl_t, cl_t *);
 int _readfat(int, struct bootblock *, int, u_char **);
 
 static cl_t firstfreecl = 0xFFFFFFFF;
@@ -360,11 +360,12 @@ int checkfat(int fs, struct bootblock *boot, int no,u_char *buffer)
 				p = buffer + 3*(nextclus/2);
 				break;
 			}
-			ret = checkclnum(boot,prevcl,&nextclus);
-			if(ret == FSERROR)
+			err = checkclnum(boot,prevcl,&nextclus);
+			ret |= err;
+			if(err & FSERROR)
 				return -1;
 			//truncate the rest clusters
-			if(ret == FSFATMOD)
+			if(err &  FSFATMOD)
 				break;
 			len++;
 			/*
@@ -388,14 +389,14 @@ int checkfat(int fs, struct bootblock *boot, int no,u_char *buffer)
 				fsck_warn("Cluster chain starting at %u ends with cluster marked %s,cl = %d ,nextclus = %d\n",cl,rsrvdcltype(nextclus),cl,nextclus);
 				SET_BIT(fat_bitmap[prevcl/32],prevcl%32);
 				/*if the next cluster is free or reversed ,just clear the existing cluster chain ,let this free or reversed cluster alone*/
-				ret |= tryclear(fat,cl,&prevcl);
+				ret |= tryclear(boot,fat,cl,&prevcl);
 				break;
 			}
 			/*out of range*/
 			if(nextclus < CLUST_FIRST ||(( nextclus >= boot->NumClusters) && (nextclus < (CLUST_EOFS & boot->ClustMask)))){
 				fsck_warn("Clusters chain starting at %u ends with cluster out of range (%u) \n",cl,nextclus);
 				SET_BIT(fat_bitmap[prevcl/32],prevcl%32);
-				ret |= tryclear(fat,cl,&prevcl);
+				ret |= tryclear(boot,fat,cl,&prevcl);
 				break;
 			}
 
@@ -471,7 +472,7 @@ int checkfat(int fs, struct bootblock *boot, int no,u_char *buffer)
 					 *because i handle fat chain by chain here,
 					 *it never appear  situation  that three or more cluster chains linked
 					 */
-					ret |= tryclear(fat,cl,&prevcl);
+					ret |= tryclear(boot,fat,cl,&prevcl);
 					break;
 				}
 			}
@@ -732,19 +733,42 @@ comparefat(struct bootblock *boot, u_char*first, u_char  *second, int fatnum)
 }
 
 void
-clearchain(struct cluster_chain_descriptor *fat, cl_t head)
-{
+clearchain(struct bootblock *boot,struct cluster_chain_descriptor *fat, cl_t head)
+ {
+	struct fatcache * curr,*next;
+	struct fragment *frag, *insert;
+
 	fsck_debug("%s:fat:%p , head(%d) ,length(%d)\n",__func__,fat,fat->head,fat->length);
 	assert(fat);
 	if(fat->head != head)
-		return ;
+		return;
+	/*re-calc free blocks*/
+	boot->NumFree += fat->length;
+	/*move to free tree for writefat()*/
+	curr = fat->child;
+	while(curr){
+		next = curr->next;
+		frag = New_fragment();
+		if(!frag){
+			fsck_warn("%s: No space left\n",__func__);
+			goto free;
+		}
+		frag->head = curr->head;
+		frag->length = curr->length;
+		insert = RB_INSERT(FSCK_MSDOS_FRAGMENT,&rb_free_root,frag);
+		if(insert)
+			fsck_warn("%s:fragment(head:0x%x) exist\n",__func__,frag->head);
+free:
+		free(curr);
+		curr = next;
+	}
 	/*must remove from rb tree before free*/
 	RB_REMOVE(FSCK_MSDOS_CACHE,&rb_root,fat);
 	free(fat);
 }
 
 int
-tryclear(struct cluster_chain_descriptor *fat, cl_t head, cl_t *trunc)
+tryclear(struct bootblock* boot, struct cluster_chain_descriptor *fat, cl_t head, cl_t *trunc)
 {
 	fsck_debug("fat:%p ,head :%d ,trunc :%d \n",fat,head,*trunc);
 	if(!fat || !trunc){
@@ -752,10 +776,10 @@ tryclear(struct cluster_chain_descriptor *fat, cl_t head, cl_t *trunc)
 		return FSERROR;
 	}
 	if (ask(1, "Clear chain starting at %u", head)) {
-		clearchain(fat, head);
+		clearchain(boot,fat, head);
 		return FSFATMOD;
 	} else if (ask(1, "Truncate")) {
-		Trunc(fat,*trunc);
+		Trunc(boot,fat,*trunc);
 		return FSFATMOD;
 	} else
 		return FSERROR;
@@ -817,7 +841,7 @@ writefat(int fs, struct bootblock *boot, int correct_fat)
 			break;
 		}
 
-		if (!_readfat(fs, boot, boot->ValidFat >= 0 ? boot->ValidFat :0,
+		if (_readfat(fs, boot, boot->ValidFat >= 0 ? boot->ValidFat :0,
 					 &old_fat)) {
 			free(buffer);
 			return FSFATAL;
@@ -907,13 +931,13 @@ checklost(int dosfs, struct bootblock *boot)
 			/* If the reconnect failed, then just clear the chain */
 			pwarn("Error reconnecting chain - clearing\n");
 			mod &= ~FSFATAL;
-			clearchain(fat,fat->head);
+			clearchain(boot,fat,fat->head);
 			mod |= FSFATMOD;
 			fat  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
 			continue;
 		}
 		if (ret == FSERROR && ask(1, "Clear")) {
-			clearchain(fat, fat->head);
+			clearchain(boot, fat, fat->head);
 			mod |= FSFATMOD;
 		}
 		fat  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
