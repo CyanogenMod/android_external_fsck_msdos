@@ -476,7 +476,7 @@ checksize(struct bootblock *boot, u_char *p,
 			//TODO: i don't no why exec clearchain here.when cl != fat.head,clear do nothing
 			//clearchain(boot, fat,cl);
 			//if trunc it ,when next fsck ,the rest will locate in LOST.DIR
-			Trunc(fat,cl);
+			Trunc(boot,fat,cl);
 			fsck_debug("after truncate ,fat->length = %d \n",fat->length);
 			return FSFATMOD;
 		} else
@@ -840,7 +840,7 @@ readDosDirSection(int f, struct bootblock *boot,
 						tofind.head = dirent.head;
 						c_fat = RB_FIND(FSCK_MSDOS_CACHE,&rb_root,&tofind);
 						if(c_fat)
-							clearchain(c_fat, dirent.head);
+							clearchain(boot,c_fat, dirent.head);
 						else
 							mod |= FSERROR;
 						dirent.head = 0;
