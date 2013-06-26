@@ -106,6 +106,25 @@ readboot(dosfs, boot)
 		boot->FSInfo = block[48] + (block[49] << 8);
 		boot->Backup = block[50] + (block[51] << 8);
 
+		/* If the OEM Name field is EXFAT, it's not FAT32, so bail */
+		if (!memcmp(&block[3], "EXFAT   ", 8)) {
+			pfatal("exFAT filesystem is not supported.");
+			return FSFATAL;
+		}
+
+		/* check basic parameters */
+		if ((boot->FSInfo == 0) ||
+		    (boot->BytesPerSec % DOSBOOTBLOCKSIZE != 0) ||
+		    (boot->BytesPerSec / DOSBOOTBLOCKSIZE == 0) ||
+		    (boot->SecPerClust == 0)) {
+			/*
+			 * Either the BIOS Parameter Block has been corrupted,
+                         * or this is not a FAT32 filesystem, most likely an
+                         * exFAT filesystem.
+			 */
+			pfatal("Invalid FAT32 Extended BIOS Parameter Block");
+			return FSFATAL;
+		}
 		if (lseek(dosfs, boot->FSInfo * boot->BytesPerSec, SEEK_SET)
 		    != boot->FSInfo * boot->BytesPerSec
 		    || read(dosfs, fsinfo, sizeof fsinfo)
