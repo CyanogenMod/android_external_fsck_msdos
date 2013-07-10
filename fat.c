@@ -841,7 +841,7 @@ writefat(int fs, struct bootblock *boot, int correct_fat)
 			break;
 		}
 
-		if (_readfat(fs, boot, boot->ValidFat >= 0 ? boot->ValidFat :0,
+		if (!_readfat(fs, boot, boot->ValidFat >= 0 ? boot->ValidFat :0,
 					 &old_fat)) {
 			free(buffer);
 			return FSFATAL;
