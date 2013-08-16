@@ -67,7 +67,7 @@ usage(void)
 }
 
 int
-main(int argc, char **argv)
+fsck_msdos_main(int argc, char **argv)
 {
 	int ret = 0, erg;
 	int ch;
@@ -124,7 +124,6 @@ main(int argc, char **argv)
 
 	return ret;
 }
-
 
 /*VARARGS*/
 int
