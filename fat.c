@@ -910,7 +910,7 @@ checklost(int dosfs, struct bootblock *boot)
 {
 	int mod = FSOK;
 	int ret;
-	struct cluster_chain_descriptor *fat ;
+	struct cluster_chain_descriptor *fat, *next;
 	fat = RB_MIN(FSCK_MSDOS_CACHE,&rb_root);
 	if(!fat){
 		fsck_info("%s:rb_root tree is empty\n",__func__);
@@ -931,14 +931,18 @@ checklost(int dosfs, struct bootblock *boot)
 			/* If the reconnect failed, then just clear the chain */
 			pwarn("Error reconnecting chain - clearing\n");
 			mod &= ~FSFATAL;
+			next  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
 			clearchain(boot,fat,fat->head);
 			mod |= FSFATMOD;
-			fat  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
+			fat = next;
 			continue;
 		}
 		if (ret == FSERROR && ask(1, "Clear")) {
+			next  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
 			clearchain(boot, fat, fat->head);
 			mod |= FSFATMOD;
+			fat = next;
+			continue;
 		}
 		fat  = RB_NEXT(FSCK_MSDOS_CACHE,0,fat);
 	}
