@@ -427,7 +427,8 @@ checksize(struct bootblock *boot, u_char *p,
 	 */
 	struct cluster_chain_descriptor *fat,tofind;
 	struct fatcache *cache;
-	int32_t physicalSize;
+	u_int64_t physicalSize;
+	const u_int64_t max_physical_size = 0x100000000;
 
 	if (dir->head == CLUST_FREE)
 		physicalSize = 0;
@@ -440,12 +441,29 @@ checksize(struct bootblock *boot, u_char *p,
 			pwarn("Can't find the cluster chain with head(%u) \n",dir->head);
 			return FSERROR;
 		}
-		physicalSize = fat->length * boot->ClusterSize;
+		physicalSize = ((u_int64_t)fat->length) * ((u_int64_t)boot->ClusterSize);
 	}
-	if (physicalSize < dir->size) {
+	/*
+	 *The file size means how much useful data the file contains
+	 *FAT use 4 bytes to describe the file size, so the max file size is (4GBytes - 1).
+	 *The physical size means how much space the file use in disk. The max physical
+	 *size is 4GBytes.
+	 *
+	 *For example, we create a new file in WINDOWS,which size is 100Bytes, but i
+	 *use 4KB in disk. Here 100B is file size ,and 4KB is physical size.
+	 *
+	 *Physical size = (file size + boot->ClusterSize - 1) & (boot->ClusterSize - 1)
+	 */
+	if (physicalSize > max_physical_size) {
+		fsck_err("file %s physical size exceed 4 GBytes. %llu\n",
+				fullpath(dir), physicalSize);
+		return FSERROR;
+	}
+
+	if (physicalSize < (u_int64_t)dir->size) {
 		pwarn("size of %s is %u, should at most be %u\n",
 		      fullpath(dir), dir->size, physicalSize);
-		fsck_debug("physicalSize:%d ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
+		fsck_debug("physicalSize:%llu ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
 		if (ask(1, "Truncate")) {
 			dir->size = physicalSize;
 			p[28] = (u_char)physicalSize;
@@ -455,10 +473,10 @@ checksize(struct bootblock *boot, u_char *p,
 			return FSDIRMOD;
 		} else
 			return FSERROR;
-	} else if (physicalSize - dir->size >= boot->ClusterSize) {
+	} else if (physicalSize - (u_int64_t)dir->size >= (u_int64_t)boot->ClusterSize) {
 		pwarn("%s has too many clusters allocated\n",
 		      fullpath(dir));
-		fsck_debug("physicalSize:%d ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
+		fsck_debug("physicalSize:%llu ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
 		if (ask(1, "Drop superfluous clusters")) {
 			cl_t cl;
 			u_int32_t sz = 0;
@@ -470,12 +488,9 @@ checksize(struct bootblock *boot, u_char *p,
 				if(cl == CLUST_EOF)
 					break;
 			}
-			//cache = Find_nextclus(fat,cl,&cl);
 			if(!cache && !cl)
 				return FSERROR;
-			//TODO: i don't no why exec clearchain here.when cl != fat.head,clear do nothing
-			//clearchain(boot, fat,cl);
-			//if trunc it ,when next fsck ,the rest will locate in LOST.DIR
+
 			Trunc(boot,fat,cl);
 			fsck_debug("after truncate ,fat->length = %d \n",fat->length);
 			return FSFATMOD;
