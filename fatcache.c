@@ -357,6 +357,20 @@ re_calc:
 	/*re-calc Numfree*/
 	boot->NumFree += (org_chain_len - fat->length);
 }
+
+/*
+ * This is a trade-off between time and memory
+ * In order to reduce the runtime memory consumption
+ * We change the whole strategy of cluster chain checking
+ * and managment.
+ * In some extreme cases, most of the clusters in FAT file
+ * system are discrete. that means it will take much time
+ * to manage memory and cluster chain at runtime.
+ * So set a limitation of max memory malloc here.
+ */
+int limit = 0;
+#define FSCK_MSDOS_MAX_CALLOC_TIMES	0x15000
+
 struct cluster_chain_descriptor* New_fatentry(void)
 {
 		struct cluster_chain_descriptor *fat;
@@ -366,6 +380,9 @@ struct cluster_chain_descriptor* New_fatentry(void)
 			return fat;
 		}
 		RB_SET(fat, NULL, rb);
+		if (++limit >= FSCK_MSDOS_MAX_CALLOC_TIMES)
+			exit(0);
+
 		return fat;
 }
 
@@ -375,6 +392,9 @@ struct fatcache* New_fatcache(void)
 		cache = calloc(1,sizeof(struct fatcache));
 		if(!cache)
 			fsck_warn("No space \n");
+		if (++limit >= FSCK_MSDOS_MAX_CALLOC_TIMES)
+			exit(0);
+
 		return cache;
 }
 
