@@ -42,8 +42,9 @@ RB_HEAD(FSCK_MSDOS_FRAGMENT,fragment) ;
 extern struct FSCK_MSDOS_FRAGMENT rb_free_root,rb_bad_root;
 void free_fragment_tree(struct FSCK_MSDOS_FRAGMENT* head);
 struct fragment* New_fragment(void);
-extern RB_FIND(name, x, y);
-extern RB_REMOVE(name, x, y);
-extern RB_NEXT(name, x, y);
-extern RB_INSERT(name, x, y);
+struct fragment* FSCK_MSDOS_FRAGMENT_RB_FIND(struct FSCK_MSDOS_FRAGMENT* x, struct fragment* y);
+struct fragment* FSCK_MSDOS_FRAGMENT_RB_REMOVE(struct FSCK_MSDOS_FRAGMENT* x, struct fragment* y);
+struct fragment* FSCK_MSDOS_FRAGMENT_RB_NEXT(struct fragment* y);
+struct fragment* FSCK_MSDOS_FRAGMENT_RB_INSERT(struct FSCK_MSDOS_FRAGMENT* x, struct fragment* y);
+struct fragment* FSCK_MSDOS_FRAGMENT_RB_MINMAX(struct FSCK_MSDOS_FRAGMENT* x, int val);
 #endif

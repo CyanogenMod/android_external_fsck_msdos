@@ -52,15 +52,20 @@
 #define	fsck_warn		FSCK_SLOGW
 #define	fsck_err		FSCK_SLOGE
 #define	fsck_debug		FSCK_SLOGD
+
+#ifndef offsetof
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#endif
+
 #define container_of(ptr, type, member) \
 	((type *)((unsigned long)(ptr) - offsetof(type, member)))
 int fsck_msdos_cache_compare(struct cluster_chain_descriptor *fat1,struct cluster_chain_descriptor *fat2);
 RB_HEAD(FSCK_MSDOS_CACHE,cluster_chain_descriptor);
-extern RB_FIND(name, x, y);
-extern RB_REMOVE(name, x, y);
-extern RB_NEXT(name, x, y);
-extern RB_INSERT(name, x, y);
+struct cluster_chain_descriptor* FSCK_MSDOS_CACHE_RB_FIND(struct FSCK_MSDOS_CACHE* x, struct cluster_chain_descriptor *y);
+struct cluster_chain_descriptor* FSCK_MSDOS_CACHE_RB_REMOVE(struct FSCK_MSDOS_CACHE* x, struct cluster_chain_descriptor *y);
+struct cluster_chain_descriptor* FSCK_MSDOS_CACHE_RB_NEXT(struct cluster_chain_descriptor *y);
+struct cluster_chain_descriptor* FSCK_MSDOS_CACHE_RB_INSERT(struct FSCK_MSDOS_CACHE* x, struct cluster_chain_descriptor *y);
+struct cluster_chain_descriptor* FSCK_MSDOS_CACHE_RB_MINMAX(struct FSCK_MSDOS_CACHE* x, int val);
 extern struct FSCK_MSDOS_CACHE rb_root;
 extern unsigned int * fat_bitmap;
 typedef unsigned char u_char;
