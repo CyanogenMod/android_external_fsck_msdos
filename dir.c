@@ -384,7 +384,7 @@ static int
 removede(int f, struct bootblock *boot,struct cluster_chain_descriptor *fat, u_char *start,
     u_char *end, cl_t startcl, cl_t endcl, cl_t curcl, char *path, int type)
 {
-	fsck_debug("removede : %u:%u --->> %u:%u \n",startcl,start,endcl,end);
+	fsck_debug("removede : %u:%p --->> %u:%p \n",startcl,start,endcl,end);
 	switch (type) {
 	case 0:
 		pwarn("Invalid long filename entry for %s\n", path);
@@ -425,8 +425,8 @@ checksize(struct bootblock *boot, u_char *p,
 	/*
 	 * Check size on ordinary files
 	 */
-	struct cluster_chain_descriptor *fat,tofind;
-	struct fatcache *cache;
+	struct cluster_chain_descriptor *fat = NULL,tofind;
+	struct fatcache *cache = NULL;
 	u_int64_t physicalSize;
 	const u_int64_t max_physical_size = 0x100000000;
 
@@ -461,7 +461,7 @@ checksize(struct bootblock *boot, u_char *p,
 	}
 
 	if (physicalSize < (u_int64_t)dir->size) {
-		pwarn("size of %s is %u, should at most be %u\n",
+		pwarn("size of %s is %u, should at most be %llu\n",
 		      fullpath(dir), dir->size, physicalSize);
 		fsck_debug("physicalSize:%llu ,dir->size = %d ,dir->head:0x%x\n",physicalSize,dir->size,dir->head);
 		if (ask(1, "Truncate")) {
