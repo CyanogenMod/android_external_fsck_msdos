@@ -19,4 +19,5 @@ LOCAL_C_INCLUDES := external/fsck_msdos/
 LOCAL_MODULE := fsck_msdos
 LOCAL_MODULE_TAGS :=
 LOCAL_STATIC_LIBRARIES := libfsck_msdos
+LOCAL_SYSTEM_SHARED_LIBRARIES := libc libcutils
 include $(BUILD_EXECUTABLE)
